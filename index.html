@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>製造実績入力システム</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    body { font-family: 'Meiryo', sans-serif; padding: 12px; color: #333; background-color: #f5f5f5; margin: 0; }
+    .card { background: #fff; border-radius: 6px; padding: 12px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    label { font-weight: bold; font-size: 13px; color: #555; display: block; margin-bottom: 4px; }
+    input[type="text"], input[type="number"] { width: 100%; padding: 10px; box-sizing: border-box; font-size: 15px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 2px; }
+    .info-text { font-size: 12px; color: #28a745; font-weight: bold; min-height: 16px; margin-bottom: 8px; }
+
+    /* 製番行 */
+    .seiban-row { display: flex; gap: 8px; margin-top: 4px; }
+    .seiban-row input { flex: 1; }
+    .scan-btn { background-color: #6f42c1; color: white; border: none; padding: 0 12px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; white-space: nowrap; }
+
+    /* バーコードスキャナー */
+    #qr-reader { width: 100%; margin-top: 8px; border-radius: 4px; overflow: hidden; display: none; }
+    #qr-reader-stop { width: 100%; padding: 10px; background: #dc3545; color: white; border: none; border-radius: 4px; font-size: 14px; font-weight: bold; cursor: pointer; margin-top: 4px; display: none; }
+
+    /* 場所コード */
+    .loc-toggle { display: flex; gap: 6px; margin-bottom: 6px; }
+    .loc-toggle button { flex: 1; padding: 7px; font-size: 13px; font-weight: bold; border: 1px solid #ccc; border-radius: 4px; background: #f0f0f0; color: #555; cursor: pointer; }
+    .loc-toggle button.active { background: #007bff; color: #fff; border-color: #007bff; }
+    #loc-list { width: 100%; padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 2px; display: none; box-sizing: border-box; }
+
+    /* マスタ情報表示 */
+    .display-box { background: #f9f9f9; border: 1px solid #ddd; padding: 10px; border-radius: 4px; transition: all 0.3s ease; }
+    .status-uncompleted { border-left: 6px solid #007bff; background: #e6f2ff; }
+    .status-completed   { border-left: 6px solid #dc3545; background: #f8d7da; }
+    .display-item { margin: 5px 0; font-size: 14px; border-bottom: 1px dashed #eee; padding-bottom: 4px; }
+    .label-sub { color: #666; display: inline-block; width: 80px; }
+    .val { font-weight: bold; color: #111; }
+    #prod-status { font-size: 16px; }
+
+    /* 写真 */
+    .camera-btn { background-color: #17a2b8; color: white; border: none; padding: 12px; font-size: 15px; font-weight: bold; border-radius: 4px; width: 100%; cursor: pointer; margin-top: 5px; }
+    #preview { width: 100%; max-height: 180px; object-fit: contain; margin-top: 10px; display: none; border: 1px solid #ccc; border-radius: 4px; }
+
+    .btn-submit { padding: 14px; font-size: 16px; cursor: pointer; background-color: #007bff; color: white; border: none; border-radius: 4px; font-weight: bold; width: 100%; box-sizing: border-box; margin-top: 15px; }
+    .btn-submit:disabled { background-color: #ccc; cursor: not-allowed; }
+    #msg { color: #d9534f; font-weight: bold; margin-top: 10px; text-align: center; font-size: 14px; }
+
+    /* GAS URLが未設定の場合の警告 */
+    #gas-warning { background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px; padding: 12px; margin-bottom: 12px; font-size: 13px; color: #856404; display: none; }
+  </style>
+</head>
+<body>
+
+  <div id="gas-warning">
+    ⚠️ GAS_URLが設定されていません。index.htmlの先頭にあるGAS_URLを設定してください。
+  </div>
+
+  <div class="card">
+    <label for="user_code">担当者コード:</label>
+    <input type="text" id="user_code" placeholder="担当者コードを入力" onchange="checkUser()">
+    <div id="user_name_disp" class="info-text"></div>
+
+    <label>場所コード:</label>
+    <div class="loc-toggle">
+      <button id="btn-loc-input" class="active" onclick="switchLocMode('input')">✏️ 直接入力</button>
+      <button id="btn-loc-list" onclick="switchLocMode('list')">📋 リストから選択</button>
+    </div>
+    <input type="text" id="loc_code" placeholder="場所コードを入力" onchange="checkLocation()">
+    <select id="loc-list" onchange="selectLocationFromList()">
+      <option value="">--- 場所を選択 ---</option>
+    </select>
+    <div id="loc_name_disp" class="info-text"></div>
+
+    <label for="seiban">製番入力 / スキャン:</label>
+    <div class="seiban-row">
+      <input type="text" id="seiban" placeholder="製番入力または右のボタン" oninput="delaySearch(this.value)" onkeypress="handleKeyPress(event)">
+      <button class="scan-btn" onclick="toggleScanner()">🔍 スキャン</button>
+    </div>
+    <div id="qr-reader"></div>
+    <button id="qr-reader-stop" onclick="stopScanner()">■ スキャン停止</button>
+  </div>
+
+  <div id="info-card" class="card display-box">
+    <div class="display-item"><span class="label-sub">状態:</span> <span id="prod-status" class="val">-</span></div>
+    <div class="display-item"><span class="label-sub">得意先:</span> <span id="prod-customer" class="val">-</span></div>
+    <div class="display-item"><span class="label-sub">品名:</span> <span id="prod-name" class="val" style="color:#0056b3;">-</span></div>
+    <div class="display-item"><span class="label-sub">受注数量:</span> <span id="prod-qty" class="val">-</span></div>
+  </div>
+
+  <div class="card">
+    <label>実績写真（任意）:</label>
+    <button class="camera-btn" onclick="document.getElementById('camera-file').click()">📷 写真を撮影する</button>
+    <input type="file" id="camera-file" accept="image/*" capture="environment" style="display:none" onchange="loadPhoto(this)">
+    <img id="preview" alt="プレビュー">
+  </div>
+
+  <div class="card">
+    <label for="input_qty">実績数量を入力:</label>
+    <input type="number" id="input_qty" placeholder="数量を入力してください">
+  </div>
+
+  <div id="msg"></div>
+  <button id="btn-submit" class="btn-submit" disabled onclick="submitForm()">登録する</button>
+
+  <script>
+    // ★ここにGASのデプロイURLを貼り付けてください★
+    const GAS_URL = 'YOUR_GAS_URL_HERE';
+
+    let currentRowNumber = null;
+    let currentUserName = "";
+    let currentLocationName = "";
+    let searchTimer = null;
+    let base64Image = null;
+    let locMode = 'input';
+    let html5QrCode = null;
+    let isScanning = false;
+
+    // GAS APIを呼ぶ共通関数
+    async function callGAS(params) {
+      const url = GAS_URL + '?' + new URLSearchParams(params).toString();
+      const res = await fetch(url);
+      return await res.json();
+    }
+
+    async function callGASPost(params) {
+      const res = await fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify(params),
+        headers: { 'Content-Type': 'text/plain' } // GASはapplication/jsonをブロックするためtext/plainを使用
+      });
+      return await res.json();
+    }
+
+    window.onload = async function() {
+      // GAS URL未設定チェック
+      if (GAS_URL === 'YOUR_GAS_URL_HERE') {
+        document.getElementById('gas-warning').style.display = 'block';
+        return;
+      }
+
+      // 場所リスト取得
+      try {
+        const result = await callGAS({ action: 'getLocationList' });
+        const locations = result.locations || [];
+        const sel = document.getElementById('loc-list');
+        if (locations.length === 0) {
+          sel.innerHTML = '<option value="">--- データなし（場所マスタを確認） ---</option>';
+        } else {
+          locations.forEach(function(loc) {
+            const opt = document.createElement('option');
+            opt.value = loc.code;
+            opt.text = loc.code + ' : ' + loc.name;
+            opt.dataset.name = loc.name;
+            sel.appendChild(opt);
+          });
+        }
+      } catch(e) {
+        console.error('場所リスト取得エラー:', e);
+      }
+    };
+
+    // バーコードスキャナー（ライブカメラ）
+    function toggleScanner() {
+      if (isScanning) {
+        stopScanner();
+      } else {
+        startScanner();
+      }
+    }
+
+    function startScanner() {
+      document.getElementById('qr-reader').style.display = 'block';
+      document.getElementById('qr-reader-stop').style.display = 'block';
+      isScanning = true;
+
+      html5QrCode = new Html5Qrcode("qr-reader");
+      html5QrCode.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 280, height: 120 } },
+        (decodedText) => {
+          document.getElementById('seiban').value = decodedText;
+          stopScanner();
+          searchSeiban(decodedText);
+        },
+        () => {}
+      ).catch(err => {
+        document.getElementById('msg').innerText = 'カメラ起動エラー: ' + err;
+        stopScanner();
+      });
+    }
+
+    function stopScanner() {
+      if (html5QrCode && isScanning) {
+        html5QrCode.stop().catch(() => {});
+      }
+      document.getElementById('qr-reader').style.display = 'none';
+      document.getElementById('qr-reader-stop').style.display = 'none';
+      isScanning = false;
+      html5QrCode = null;
+    }
+
+    function switchLocMode(mode) {
+      locMode = mode;
+      const input = document.getElementById('loc_code');
+      const list  = document.getElementById('loc-list');
+      input.style.display = (mode === 'input') ? '' : 'none';
+      list.style.display  = (mode === 'list')  ? '' : 'none';
+      document.getElementById('btn-loc-input').classList.toggle('active', mode === 'input');
+      document.getElementById('btn-loc-list').classList.toggle('active',  mode === 'list');
+      currentLocationName = '';
+      document.getElementById('loc_name_disp').innerText = '';
+      document.getElementById('loc_code').value = '';
+      document.getElementById('loc-list').selectedIndex = 0;
+      if (mode === 'list') setTimeout(() => { list.focus(); }, 100);
+    }
+
+    function selectLocationFromList() {
+      const sel = document.getElementById('loc-list');
+      const code = sel.value;
+      if (!code) return;
+      const name = sel.options[sel.selectedIndex].dataset.name;
+      currentLocationName = name;
+      document.getElementById('loc_name_disp').innerText = '場所: ' + name;
+    }
+
+    async function checkUser() {
+      const code = document.getElementById('user_code').value.trim();
+      if (!code) return;
+      const result = await callGAS({ action: 'lookupUser', code });
+      currentUserName = result.name;
+      document.getElementById('user_name_disp').innerText = '担当者: ' + result.name;
+    }
+
+    async function checkLocation() {
+      const code = document.getElementById('loc_code').value.trim();
+      if (!code) return;
+      const result = await callGAS({ action: 'lookupLocation', code });
+      currentLocationName = result.name;
+      document.getElementById('loc_name_disp').innerText = '場所: ' + result.name;
+    }
+
+    function delaySearch(val) {
+      const cleanVal = val.trim();
+      if (cleanVal.length < 5) return;
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { searchSeiban(cleanVal); }, 1000);
+    }
+
+    function handleKeyPress(e) {
+      if (e.key === 'Enter') {
+        clearTimeout(searchTimer);
+        searchSeiban(document.getElementById('seiban').value.trim());
+      }
+    }
+
+    async function searchSeiban(seibanVal) {
+      if (!seibanVal) return;
+      document.getElementById('msg').innerText = 'マスタ検索中...';
+      const result = await callGAS({ action: 'lookupProduct', seiban: seibanVal });
+      const card = document.getElementById('info-card');
+      card.classList.remove('status-uncompleted', 'status-completed');
+      if (result.success) {
+        document.getElementById('prod-customer').innerText = result.customer;
+        document.getElementById('prod-name').innerText = result.name;
+        document.getElementById('prod-qty').innerText = result.quantity + ' 個';
+        document.getElementById('input_qty').value = result.quantity;
+        document.getElementById('msg').innerText = '';
+        currentRowNumber = result.rowNumber;
+        if (result.status === '完了') {
+          card.classList.add('status-completed');
+          document.getElementById('prod-status').innerHTML = '<span style="color:#dc3545;">⚠️ すでに完了済 (' + result.updateTime + ')</span>';
+          document.getElementById('msg').innerText = '※この製番は完了しているため上書き登録になります';
+          document.getElementById('btn-submit').style.backgroundColor = '#dc3545';
+          document.getElementById('btn-submit').innerText = 'この内容で上書き登録する';
+        } else {
+          card.classList.add('status-uncompleted');
+          document.getElementById('prod-status').innerHTML = '<span style="color:#007bff;">[未完了] まだ登録されていません</span>';
+          document.getElementById('btn-submit').style.backgroundColor = '#007bff';
+          document.getElementById('btn-submit').innerText = '登録する';
+        }
+        document.getElementById('btn-submit').disabled = false;
+      } else {
+        document.getElementById('prod-status').innerText = '-';
+        document.getElementById('prod-customer').innerText = '-';
+        document.getElementById('prod-name').innerText = result.msg;
+        document.getElementById('prod-qty').innerText = '-';
+        document.getElementById('btn-submit').disabled = true;
+        currentRowNumber = null;
+      }
+    }
+
+    function loadPhoto(input) {
+      if (input.files && input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+          base64Image = e.target.result;
+          document.getElementById('preview').src = base64Image;
+          document.getElementById('preview').style.display = 'block';
+        };
+        reader.readAsDataURL(input.files[0]);
+      }
+    }
+
+    async function submitForm() {
+      const uCode = document.getElementById('user_code').value.trim();
+      const lCode = (locMode === 'input')
+        ? document.getElementById('loc_code').value.trim()
+        : document.getElementById('loc-list').value.trim();
+      const qty = document.getElementById('input_qty').value.trim();
+      const seibanVal = document.getElementById('seiban').value.trim();
+      if (!uCode || !lCode || !qty || !currentRowNumber) {
+        document.getElementById('msg').innerText = '⚠️ 全項目を入力してください';
+        return;
+      }
+      document.getElementById('btn-submit').disabled = true;
+      document.getElementById('msg').innerText = '登録処理中...';
+
+      let imageUrl = null;
+      if (base64Image) {
+        const imgResult = await callGASPost({ action: 'uploadImage', base64Data: base64Image, seiban: seibanVal });
+        if (imgResult.url && imgResult.url.indexOf('エラー') !== -1) {
+          document.getElementById('msg').innerText = '⚠️ ' + imgResult.url;
+          document.getElementById('btn-submit').disabled = false;
+          return;
+        }
+        imageUrl = imgResult.url;
+      }
+
+      const result = await callGASPost({
+        action: 'updateMaster',
+        rowNumber: currentRowNumber,
+        userCode: uCode,
+        userName: currentUserName,
+        locCode: lCode,
+        locName: currentLocationName,
+        inputQty: qty,
+        imageUrl: imageUrl
+      });
+
+      document.getElementById('msg').style.color = 'green';
+      document.getElementById('msg').innerText = result.msg;
+      setTimeout(resetForm, 1500);
+    }
+
+    function resetForm() {
+      document.getElementById('seiban').value = '';
+      document.getElementById('input_qty').value = '';
+      document.getElementById('prod-customer').innerText = '-';
+      document.getElementById('prod-name').innerText = '-';
+      document.getElementById('prod-qty').innerText = '-';
+      document.getElementById('prod-status').innerText = '-';
+      document.getElementById('preview').style.display = 'none';
+      document.getElementById('preview').src = '';
+      document.getElementById('camera-file').value = '';
+      document.getElementById('msg').innerText = '';
+      document.getElementById('msg').style.color = '#d9534f';
+      const card = document.getElementById('info-card');
+      card.classList.remove('status-uncompleted', 'status-completed');
+      document.getElementById('btn-submit').style.backgroundColor = '#007bff';
+      document.getElementById('btn-submit').innerText = '登録する';
+      document.getElementById('btn-submit').disabled = true;
+      base64Image = null;
+      currentRowNumber = null;
+    }
+  </script>
+
+</body>
+</html>
