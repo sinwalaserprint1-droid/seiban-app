@@ -16,10 +16,17 @@
     .scan-btn { background-color: #6f42c1; color: white; border: none; padding: 0 12px; font-size: 14px; font-weight: bold; border-radius: 4px; cursor: pointer; white-space: nowrap; }
     #qr-reader { width: 100%; margin-top: 8px; border-radius: 4px; overflow: hidden; display: none; }
     #qr-reader-stop { width: 100%; padding: 10px; background: #dc3545; color: white; border: none; border-radius: 4px; font-size: 14px; font-weight: bold; cursor: pointer; margin-top: 4px; display: none; }
+
+    /* 場所コード */
     .loc-toggle { display: flex; gap: 6px; margin-bottom: 6px; }
     .loc-toggle button { flex: 1; padding: 7px; font-size: 13px; font-weight: bold; border: 1px solid #ccc; border-radius: 4px; background: #f0f0f0; color: #555; cursor: pointer; }
     .loc-toggle button.active { background: #007bff; color: #fff; border-color: #007bff; }
-    #loc-list { width: 100%; padding: 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 4px; margin-bottom: 2px; display: none; box-sizing: border-box; }
+    /* リストボタンにselectを重ねてタップで直接ピッカーを開く */
+    .loc-list-btn-wrap { flex: 1; position: relative; overflow: hidden; border-radius: 4px; }
+    .loc-list-btn-wrap button { width: 100%; padding: 7px; font-size: 13px; font-weight: bold; border: 1px solid #ccc; border-radius: 4px; background: #f0f0f0; color: #555; cursor: pointer; }
+    .loc-list-btn-wrap button.active { background: #007bff; color: #fff; border-color: #007bff; }
+    .loc-list-btn-wrap select { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
+
     .display-box { background: #f9f9f9; border: 1px solid #ddd; padding: 10px; border-radius: 4px; transition: all 0.3s ease; }
     .status-uncompleted { border-left: 6px solid #007bff; background: #e6f2ff; }
     .status-completed   { border-left: 6px solid #dc3545; background: #f8d7da; }
@@ -49,12 +56,15 @@
     <label>場所コード:</label>
     <div class="loc-toggle">
       <button id="btn-loc-input" class="active" onclick="switchLocMode('input')">✏️ 直接入力</button>
-      <button id="btn-loc-list" onclick="switchLocMode('list')">📋 リストから選択</button>
+      <!-- ボタンの上にselectを透明で重ねる → タップでOSのピッカーが直接開く -->
+      <div class="loc-list-btn-wrap">
+        <button id="btn-loc-list">📋 リストから選択</button>
+        <select id="loc-list-overlay" onchange="selectLocationFromOverlay(this)">
+          <option value="">--- 場所を選択 ---</option>
+        </select>
+      </div>
     </div>
     <input type="text" id="loc_code" placeholder="場所コードを入力" onchange="checkLocation()">
-    <select id="loc-list" onchange="selectLocationFromList()">
-      <option value="">--- 場所を選択 ---</option>
-    </select>
     <div id="loc_name_disp" class="info-text"></div>
 
     <label for="seiban">製番入力 / スキャン:</label>
@@ -92,8 +102,7 @@
     // ★ここにGASのデプロイURLを貼り付けてください★
     const GAS_URL = 'https://script.google.com/macros/s/AKfycbwq_7lcRC4makEqI8kL1myW1A-rPl-3FYtbekF1QzxthWhKy_dUjhk6HntqoWXDia-6/exec';
 
-    // 製番フォーマット検証：6桁-3桁 または 6桁-3桁-1桁以上
-    // 例: 260530-025 / 260602-006-1
+    // 製番フォーマット検証：英数字6桁-英数字3桁（-枝番は任意）
     function isValidSeiban(val) {
       return /^[A-Za-z0-9]{6}-[A-Za-z0-9]{3}(-\S+)?$/.test(val.trim());
     }
@@ -101,6 +110,7 @@
     let currentRowNumber = null;
     let currentUserName = "";
     let currentLocationName = "";
+    let currentLocCode = "";
     let searchTimer = null;
     let base64Image = null;
     let locMode = 'input';
@@ -130,7 +140,7 @@
       try {
         const result = await callGAS({ action: 'getLocationList' });
         const locations = result.locations || [];
-        const sel = document.getElementById('loc-list');
+        const sel = document.getElementById('loc-list-overlay');
         if (locations.length === 0) {
           sel.innerHTML = '<option value="">--- データなし（場所マスタを確認） ---</option>';
         } else {
@@ -147,6 +157,49 @@
       }
     };
 
+    // リストから選択（selectを直接タップで選ぶ）
+    function selectLocationFromOverlay(sel) {
+      const code = sel.value;
+      if (!code) return;
+      const name = sel.options[sel.selectedIndex].dataset.name;
+      currentLocCode = code;
+      currentLocationName = name;
+      locMode = 'list';
+      document.getElementById('btn-loc-input').classList.remove('active');
+      document.getElementById('btn-loc-list').classList.add('active');
+      document.getElementById('loc_code').style.display = 'none';
+      document.getElementById('loc_name_disp').innerText = '場所: ' + name + ' (' + code + ')';
+    }
+
+    function switchLocMode(mode) {
+      locMode = mode;
+      document.getElementById('loc_code').style.display = (mode === 'input') ? '' : 'none';
+      document.getElementById('btn-loc-input').classList.toggle('active', mode === 'input');
+      document.getElementById('btn-loc-list').classList.toggle('active', mode === 'list');
+      currentLocationName = '';
+      currentLocCode = '';
+      document.getElementById('loc_name_disp').innerText = '';
+      document.getElementById('loc_code').value = '';
+      document.getElementById('loc-list-overlay').selectedIndex = 0;
+    }
+
+    async function checkUser() {
+      const code = document.getElementById('user_code').value.trim();
+      if (!code) return;
+      const result = await callGAS({ action: 'lookupUser', code });
+      currentUserName = result.name;
+      document.getElementById('user_name_disp').innerText = '担当者: ' + result.name;
+    }
+
+    async function checkLocation() {
+      const code = document.getElementById('loc_code').value.trim();
+      if (!code) return;
+      const result = await callGAS({ action: 'lookupLocation', code });
+      currentLocCode = code;
+      currentLocationName = result.name;
+      document.getElementById('loc_name_disp').innerText = '場所: ' + result.name;
+    }
+
     function toggleScanner() {
       isScanning ? stopScanner() : startScanner();
     }
@@ -161,11 +214,10 @@
         { fps: 10, qrbox: { width: 280, height: 120 } },
         (decodedText) => {
           const cleaned = decodedText.trim();
-          // 製番フォーマット検証：6桁-3桁（-suffix任意）のみ受け付ける
           if (!isValidSeiban(cleaned)) {
-            document.getElementById('msg').innerText = '⚠️ 製番フォーマット不一致: ' + cleaned + '（再スキャンしてください）';
+            document.getElementById('msg').innerText = '⚠️ フォーマット不一致: ' + cleaned + '（再スキャン）';
             document.getElementById('msg').style.color = '#d9534f';
-            return; // スキャン継続
+            return;
           }
           document.getElementById('seiban').value = cleaned;
           document.getElementById('msg').innerText = '';
@@ -187,47 +239,8 @@
       html5QrCode = null;
     }
 
-    function switchLocMode(mode) {
-      locMode = mode;
-      document.getElementById('loc_code').style.display = (mode === 'input') ? '' : 'none';
-      document.getElementById('loc-list').style.display = (mode === 'list')  ? '' : 'none';
-      document.getElementById('btn-loc-input').classList.toggle('active', mode === 'input');
-      document.getElementById('btn-loc-list').classList.toggle('active',  mode === 'list');
-      currentLocationName = '';
-      document.getElementById('loc_name_disp').innerText = '';
-      document.getElementById('loc_code').value = '';
-      document.getElementById('loc-list').selectedIndex = 0;
-      if (mode === 'list') setTimeout(() => { document.getElementById('loc-list').focus(); }, 100);
-    }
-
-    function selectLocationFromList() {
-      const sel = document.getElementById('loc-list');
-      const code = sel.value;
-      if (!code) return;
-      const name = sel.options[sel.selectedIndex].dataset.name;
-      currentLocationName = name;
-      document.getElementById('loc_name_disp').innerText = '場所: ' + name;
-    }
-
-    async function checkUser() {
-      const code = document.getElementById('user_code').value.trim();
-      if (!code) return;
-      const result = await callGAS({ action: 'lookupUser', code });
-      currentUserName = result.name;
-      document.getElementById('user_name_disp').innerText = '担当者: ' + result.name;
-    }
-
-    async function checkLocation() {
-      const code = document.getElementById('loc_code').value.trim();
-      if (!code) return;
-      const result = await callGAS({ action: 'lookupLocation', code });
-      currentLocationName = result.name;
-      document.getElementById('loc_name_disp').innerText = '場所: ' + result.name;
-    }
-
     function delaySearch(val) {
       const cleanVal = val.trim();
-      // 手入力は6桁-3桁の最低文字数（10文字）以上になったら検索
       if (!isValidSeiban(cleanVal)) return;
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => { searchSeiban(cleanVal); }, 800);
@@ -238,7 +251,7 @@
         clearTimeout(searchTimer);
         const val = document.getElementById('seiban').value.trim();
         if (!isValidSeiban(val)) {
-          document.getElementById('msg').innerText = '⚠️ 製番は「6桁-3桁（-任意）」形式で入力してください';
+          document.getElementById('msg').innerText = '⚠️ 製番は「6桁-3桁」形式で入力してください（例: 260530-025）';
           return;
         }
         searchSeiban(val);
@@ -299,9 +312,9 @@
 
     async function submitForm() {
       const uCode = document.getElementById('user_code').value.trim();
-      const lCode = (locMode === 'input')
+      const lCode = locMode === 'input'
         ? document.getElementById('loc_code').value.trim()
-        : document.getElementById('loc-list').value.trim();
+        : currentLocCode;
       const qty = document.getElementById('input_qty').value.trim();
       const seibanVal = document.getElementById('seiban').value.trim();
       if (!uCode || !lCode || !qty || !currentRowNumber) {
@@ -360,6 +373,8 @@
       document.getElementById('btn-submit').disabled = true;
       base64Image = null;
       currentRowNumber = null;
+      currentLocCode = '';
+      currentLocationName = '';
     }
   </script>
 
