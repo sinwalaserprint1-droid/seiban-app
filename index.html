@@ -251,7 +251,7 @@
         clearTimeout(searchTimer);
         const val = document.getElementById('seiban').value.trim();
         if (!isValidSeiban(val)) {
-          document.getElementById('msg').innerText = '⚠️ 製番は「6桁-3桁」形式で入力してください（例: 260530-025）';
+          document.getElementById('msg').innerText = '⚠️ 製番は「6桁-3桁」形式で入力してください';
           return;
         }
         searchSeiban(val);
